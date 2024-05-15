@@ -17,20 +17,38 @@ board = CharucoBoard(7, 10,
                      marker_length=18.75,
                      marker_bits=4, dict_size=50)
 
-cgroup = CameraGroup.from_names(cam_names, fisheye=False)
+# make list of cameras
+cameras = []
+for name in cam_names:
+    cam = Camera(name=name)
+    cameras.append(cam)
+
+cgroup = CameraGroup(cameras)
 
 all_rows = cgroup.get_rows_videos(videos, board, verbose=verbose)
 
 cgroup.set_camera_sizes_videos(videos)
 
-error = cgroup.calibrate_rows(all_rows, board,
-                                    init_intrinsics=init_intrinsics,
-                                    init_extrinsics=init_extrinsics,
-                                    verbose=verbose, **kwargs)
+# stuff in calibrate_rows (changed from self.cameras into my own cameras list constructed from list of names)
+for rows, camera in zip(all_rows, cameras):
+    size = camera.get_size()
+
+    assert size is not None, \
+        "Camera with name {} has no specified frame size".format(camera.get_name())
+
+    if init_intrinsics:
+        objp, imgp = board.get_all_calibration_points(rows)
+        mixed = [(o, i) for (o, i) in zip(objp, imgp) if len(o) >= 9]
+        objp, imgp = zip(*mixed)
+        matrix = cv2.initCameraMatrix2D(objp, imgp, tuple(size))
+        camera.set_camera_matrix(matrix.copy())
+        camera.zero_distortions()
+
+
 
 # further break down calibrate rows to only get the imgp thing that I need to check plots
-
-
+# can probably download aniposelib locally to test
+# check and run more easily on VS code
 
 
 cgroup.calibrate_videos(videos, board)
@@ -85,6 +103,37 @@ def calibrate_rows(self, all_rows, board,
     error = self.bundle_adjust_iter(imgp, extra, verbose=verbose, **kwargs)
 
     return error
+
+# what calibrate row does
+# Camera Calibration:
+#
+#     The function iterates over each camera and its corresponding detected rows.
+#     For each camera:
+#         It retrieves the size of the camera frame.
+#         If init_intrinsics is True, it initializes the intrinsic parameters of the camera using calibration points from board.
+#         It then calls set_camera_matrix and zero_distortions methods, presumably to set the camera matrix and zero out any distortions.
+#
+# Pose Estimation:
+#
+#     After calibrating each camera's intrinsic parameters, it estimates the pose (rotation and translation) of the calibration board in each camera's frame using estimate_pose_rows method.
+#
+# Data Processing:
+#
+#     It filters out rows with less than 8 detected points.
+#     It merges the filtered rows.
+#
+# Extrinsic Calibration:
+#
+#     It extracts rotation and translation vectors from the merged data.
+#     If init_extrinsics is True, it gets initial extrinsic parameters and sets them using set_rotations and set_translations methods.
+#
+# Bundle Adjustment:
+#
+#     It performs bundle adjustment, presumably refining the camera parameters to minimize reprojection error.
+#
+# Return:
+#
+#     It returns the error from the bundle adjustment step.
 
 def get_rows_videos(self, videos, board, verbose=True):
     all_rows = []
