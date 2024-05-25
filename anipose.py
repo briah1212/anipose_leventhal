@@ -1,18 +1,20 @@
 import numpy as np
+import cv2  # Added to support visualization
+import matplotlib.pyplot as plt
 from aniposelib.boards import CharucoBoard, Checkerboard
-from aniposelib.cameras import Camera, CameraGroup
-from aniposelib.utils import load_pose2d_fnames
+from aniposelib.cameras import Camera, CameraGroup, triangulate_simple
+from aniposelib.utils import load_pose2d_fnames, get_initial_extrinsics
+from aniposelib.boards import merge_rows, extract_points, extract_rtvecs
 
 videos = [['R0530_20240401_13-04-14_calibration-charuco-camA.mp4'],
-          ['R0530_20240401_13-04-14_calibration-charuco-camB.mp4'],
           ['R0530_20240401_13-04-14_calibration-charuco-camC.mp4'],
           ['R0530_20240401_13-04-14_calibration-charuco-camD.mp4']]
 
-cam_names = ['A', 'B', 'C','D']
+cam_names = ['A', 'C','D']
 
 n_cams = len(videos)
 
-board = CharucoBoard(7, 10,
+board = CharucoBoard(10, 7,
                      square_length=25, # here, in mm but any unit works
                      marker_length=18.75,
                      marker_bits=4, dict_size=50)
@@ -25,7 +27,7 @@ for name in cam_names:
 
 cgroup = CameraGroup(cameras)
 
-all_rows = cgroup.get_rows_videos(videos, board, verbose=verbose)
+all_rows = cgroup.get_rows_videos(videos, board, verbose=True)
 
 cgroup.set_camera_sizes_videos(videos)
 
@@ -33,26 +35,74 @@ cgroup.set_camera_sizes_videos(videos)
 for rows, camera in zip(all_rows, cameras):
     size = camera.get_size()
 
+    # Added check for size
     assert size is not None, \
         "Camera with name {} has no specified frame size".format(camera.get_name())
 
-    if init_intrinsics:
-        objp, imgp = board.get_all_calibration_points(rows)
-        mixed = [(o, i) for (o, i) in zip(objp, imgp) if len(o) >= 9]
-        objp, imgp = zip(*mixed)
-        matrix = cv2.initCameraMatrix2D(objp, imgp, tuple(size))
-        camera.set_camera_matrix(matrix.copy())
-        camera.zero_distortions()
+    objp, imgp = board.get_all_calibration_points(rows)
+    mixed = [(o, i) for (o, i) in zip(objp, imgp) if len(o) >= 9]
+
+    # Added check for mixed being empty
+    if not mixed:
+        print(f"No valid calibration points found for camera {camera.get_name()}")
+        continue
+
+    objp, imgp = zip(*mixed)
+    matrix = cv2.initCameraMatrix2D(objp, imgp, tuple(size))
+    camera.set_camera_matrix(matrix.copy())
+    camera.zero_distortions()
 
 
+    print(cgroup.get_dicts())
+
+    for i, (row, cam) in enumerate(zip(all_rows, cameras)):
+        all_rows[i] = board.estimate_pose_rows(cam, row)
+
+    new_rows = [[r for r in rows if r['ids'].size >= 8] for rows in all_rows]
+    merged = merge_rows(new_rows)
+    imgp, extra = extract_points(merged, board, min_cameras=2)
+
+    # if init_extrinsics:
+    rtvecs = extract_rtvecs(merged)
+    # # if verbose:
+    # pprint(get_connections(rtvecs, cgroup.get_names()))
+
+    rvecs, tvecs = get_initial_extrinsics(rtvecs, cgroup.get_names())
+    cgroup.set_rotations(rvecs)
+    cgroup.set_translations(tvecs)
+
+    # error = cgroup.bundle_adjust_iter(imgp, extra)
+
+print("Calibration complete")
+
+print("visualizing the imgp points")
+
+points3d = cgroup.triangulate(imgp)
+
+def visualize_calibration_points(all_obj, all_img):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    for obj, img in zip(all_obj, all_img):
+        ax.scatter(obj[:, 0], obj[:, 1], obj[:, 2], c='b', marker='o')
+        ax.scatter(img[:, 0], img[:, 1], np.zeros_like(img[:, 0]), c='r', marker='x')
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title('Calibration Points')
+    ax.legend(['Object Points', 'Image Points'])
+    plt.show()
+
+visualize_calibration_points(objp, imgp)
 
 # further break down calibrate rows to only get the imgp thing that I need to check plots
 # can probably download aniposelib locally to test
 # check and run more easily on VS code
 
 
-cgroup.calibrate_videos(videos, board)
-cgroup.dump('calibration.toml')
+# cgroup.calibrate_videos(videos, board)
+# cgroup.dump('calibration.toml')
 
 # cgroup = CameraGroup.load('calibration.toml')
 
