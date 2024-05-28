@@ -1,6 +1,8 @@
 import numpy as np
 import cv2  # Added to support visualization
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D as ax
+from matplotlib.animation import FuncAnimation
 from aniposelib.boards import CharucoBoard, Checkerboard
 from aniposelib.cameras import Camera, CameraGroup, triangulate_simple
 from aniposelib.utils import load_pose2d_fnames, get_initial_extrinsics
@@ -94,7 +96,71 @@ def visualize_calibration_points(all_obj, all_img):
     ax.legend(['Object Points', 'Image Points'])
     plt.show()
 
-visualize_calibration_points(objp, imgp)
+def visualize_cameras(all_img):
+    num_cameras = len(all_img)
+    for cam_idx, img_points in enumerate(all_img):
+        plt.figure()
+        plt.scatter(img_points[:, 0], img_points[:, 1], c='b', marker='o')
+        plt.title(f"Camera {cam_idx + 1}")
+        plt.xlabel('X')
+        plt.ylabel('Y')
+        plt.axis('equal')
+        plt.grid(True)
+        plt.show()
+
+def visualize_triangulated_points(triangulated_points):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    ax.scatter(triangulated_points[:, 0], triangulated_points[:, 1], triangulated_points[:, 2], c='b', marker='o')
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title('Triangulated Points')
+    plt.show()
+
+def visualize_triangulated_points_in_batches(triangulated_points, batch_size=54):
+    num_points = triangulated_points.shape[0]
+    num_batches = (num_points + batch_size - 1) // batch_size  # Ceiling division
+
+    def plot_batch(batch_num):
+        start = batch_num * batch_size
+        end = min(start + batch_size, num_points)
+        points_batch = triangulated_points[start:end]
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.scatter(points_batch[:, 0], points_batch[:, 1], points_batch[:, 2], c='b', marker='o')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title(f'Triangulated Points (Batch {batch_num + 1}/{num_batches})')
+        plt.show()
+
+    batch_num = 0
+    while True:
+        plot_batch(batch_num)
+        user_input = input("Enter 'n' for next batch, 'p' for previous batch, or 'q' to quit: ").strip().lower()
+        if user_input == 'n':
+            if batch_num < num_batches - 1:
+                batch_num += 1
+            else:
+                print("Already at the last batch.")
+        elif user_input == 'p':
+            if batch_num > 0:
+                batch_num -= 1
+            else:
+                print("Already at the first batch.")
+        elif user_input == 'q':
+            break
+        else:
+            print("Invalid input. Please enter 'n', 'p', or 'q'.")
+
+visualize_triangulated_points_in_batches(points3d)
+visualize_triangulated_points(points3d) # should be a plane
+# visualize_cameras(imgp) # each camera should have a set of points
+# visualize_calibration_points(objp, imgp)
 
 # further break down calibrate rows to only get the imgp thing that I need to check plots
 # can probably download aniposelib locally to test
@@ -103,7 +169,6 @@ visualize_calibration_points(objp, imgp)
 
 # cgroup.calibrate_videos(videos, board)
 # cgroup.dump('calibration.toml')
-
 # cgroup = CameraGroup.load('calibration.toml')
 
 
