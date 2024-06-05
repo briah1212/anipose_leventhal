@@ -3,8 +3,8 @@ import cv2  # Added to support visualization
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D as ax
 from matplotlib.animation import FuncAnimation
-from aniposelib.boards import CharucoBoard, Checkerboard
-from aniposelib.cameras import Camera, CameraGroup, triangulate_simple
+from aniposelib.boards import CharucoBoard
+from aniposelib.cameras import Camera, CameraGroup, interpolate_data, resample_points_extra
 from aniposelib.utils import load_pose2d_fnames, get_initial_extrinsics
 from aniposelib.boards import merge_rows, extract_points, extract_rtvecs
 
@@ -17,9 +17,23 @@ cam_names = ['A', 'C','D']
 n_cams = len(videos)
 
 board = CharucoBoard(10, 7,
-                     square_length=25, # here, in mm but any unit works
-                     marker_length=18.75,
+                     square_length=16, # here, in mm but any unit works
+                     marker_length=12,
                      marker_bits=4, dict_size=50)
+
+
+# x_total = int(board.squaresX * board.square_length)
+# y_total = int(board.squaresY * board.square_length)
+# board_dict = board.board.getDictionary()
+# dict_size = board_dict.bytesList.shape[0]
+# marker_bits = board_dict.markerSize
+
+# xpixels = round(600 * x_total)
+# ypixels = round(600 * y_total)
+
+# img = board.draw((xpixels, ypixels))
+
+# cv2.imshow('board', img) 
 
 # make list of cameras
 cameras = []
@@ -55,7 +69,7 @@ for rows, camera in zip(all_rows, cameras):
     camera.zero_distortions()
 
 
-    print(cgroup.get_dicts())
+    # print(cgroup.get_dicts())
 
     for i, (row, cam) in enumerate(zip(all_rows, cameras)):
         all_rows[i] = board.estimate_pose_rows(cam, row)
@@ -73,13 +87,39 @@ for rows, camera in zip(all_rows, cameras):
     cgroup.set_rotations(rvecs)
     cgroup.set_translations(tvecs)
 
+    interpolate_data(imgp)
+    print("Resampling points")
+    resample_points_extra(imgp, extra)
+
     # error = cgroup.bundle_adjust_iter(imgp, extra)
 
 print("Calibration complete")
 
 print("visualizing the imgp points")
 
-points3d = cgroup.triangulate(imgp)
+def save_imgp_to_file(imgp, filename):
+    """
+    Save imgp points to a readable text file.
+    """
+    # Check if imgp is a numpy array, if not, convert it
+    if not isinstance(imgp, np.ndarray):
+        imgp = np.array(imgp)
+    
+    # Open the file in write mode
+    with open(filename, 'w') as file:
+        # Write a header line for clarity
+        file.write("Image Points (x, y):\n")
+        
+        # Write each point to the file
+        for point_set in imgp:
+            for point in point_set:
+                file.write(f"{point[0]}, {point[1]}\n")
+                
+    print(f"Points saved to {filename}")
+
+save_imgp_to_file(imgp, "imgp_points.txt")
+
+# ______________________________________________________________________________________
 
 def visualize_calibration_points(all_obj, all_img):
     fig = plt.figure()
@@ -157,8 +197,55 @@ def visualize_triangulated_points_in_batches(triangulated_points, batch_size=54)
         else:
             print("Invalid input. Please enter 'n', 'p', or 'q'.")
 
-visualize_triangulated_points_in_batches(points3d)
-visualize_triangulated_points(points3d) # should be a plane
+def overlay_points_on_video(video_paths, all_img, output_paths, points_per_frame=54):
+    for cam_idx, (video_path, img_points, output_path) in enumerate(zip(video_paths, all_img, output_paths)):
+        cap = cv2.VideoCapture(video_path[0])
+        if not cap.isOpened():
+            print(f"Error: Could not open video {video_path[0]}")
+            continue
+
+        # Get video properties
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))  # Total frames in input video
+        
+        # Define the codec and create VideoWriter object
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+
+        total_points = len(img_points)
+        num_frames = total_frames # OR hardcode: (total_points // points_per_frame) + 100
+
+        for frame_idx in range(num_frames):
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            start_idx = (frame_idx) * points_per_frame
+            end_idx = start_idx + points_per_frame
+            points = img_points[start_idx:end_idx]
+
+            for point in points:
+                if not np.isnan(point).any():
+                    x, y = int(point[0]), int(point[1])
+                    cv2.circle(frame, (x, y), 5, (0, 0, 255), -1)
+
+            out.write(frame)
+
+        cap.release()
+        out.release()
+
+points3d = cgroup.triangulate(imgp)
+points_3d, picked, p2ds, errors = cgroup.triangulate_ransac(
+                imgp, min_cams=3, progress=True)
+
+output_paths = ['output_camA.mp4', 'output_camC.mp4', 'output_camD.mp4']
+
+# Call the function to overlay points on videos
+overlay_points_on_video(videos, imgp, output_paths)
+# visualize_triangulated_points_in_batches(points_3d)
+# visualize_triangulated_points(points_3d) # should be a plane
 # visualize_cameras(imgp) # each camera should have a set of points
 # visualize_calibration_points(objp, imgp)
 
